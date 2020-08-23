@@ -1,0 +1,130 @@
+# Makefile for avr-gcc on linux (and possibly other platforms)
+# objective: allow builds without AvrStudio IDE
+# usage:
+#    make -f MakefileAvrGcc <make targets>
+#
+# tested on Ubuntu 19.10 with avr-gcc from default repos
+#    avr-gcc (GCC) 5.4.0
+#    GNU Make 4.2.1
+#    avrdude version 6.3-20171130
+#
+# changelog:
+#   2020-08-24, dg7sb, initial version
+
+#name of executable
+PRG                = 23nbfm
+
+#object files - should be one for each C file
+OBJ                = lcd.o main.o settings.o smeter.o spectrum.o vfo.o
+
+# mcu parameter for compiler
+MCU_TARGET         = atmega328p 
+
+# mcu parameter for avrdude
+MCU_AVRDUDE        = m328p
+
+# fuses to program, currently the defaults (1MHz internal clock etc.)
+FUSES_AVRDUDE      = -U lfuse:w:0x62:m -U hfuse:w:0xd9:m -U efuse:w:0xff:m 
+
+#avrdude options for your programmer hardware
+#tested with Diamex AVR-Prog
+PROGRAMMER_AVRDUDE = -c avrisp2 -P usb 
+
+# optimize for size
+OPTIMIZE           = -Os
+
+DEFS               =
+LIBS               =
+
+# names of toolchain components (I assume they're in the path)
+CC             = avr-gcc
+OBJCOPY        = avr-objcopy
+OBJDUMP        = avr-objdump
+AVRDUDE        = avrdude
+
+# Override is only needed by avr-lib build system.
+override CFLAGS        = -Wall $(OPTIMIZE) -mmcu=$(MCU_TARGET) $(DEFS)
+override LDFLAGS       = -Wl,-Map,$(PRG).map 
+
+
+all: $(PRG).elf $(PRG).hex #flashavr
+
+$(PRG).elf: $(OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
+
+.PHONY: flashavr version.h
+flashavr:
+	$(AVRDUDE) -p $(MCU_AVRDUDE) $(PROGRAMMER_AVRDUDE) $(FUSES_AVRDUDE) -U flash:w:$(PRG).hex:i
+	
+# we might eventually introduce automatic build timestamps in this project, too
+# currently unused, not sure how to do this on non POSIX platforms
+version.h:
+	date "+#define VERSION \"%Y%m%d_%H%M%S\"" >version.h
+
+clean:
+	rm -rf *.o $(PRG).elf *.eps *.png *.pdf *.bak 
+	rm -rf *.lst *.map $(EXTRA_CLEAN_FILES)
+
+lst:  $(PRG).lst
+
+%.lst: %.elf
+	$(OBJDUMP) -h -S $< > $@
+
+# Rules for building the .text rom images
+
+text: hex bin srec
+
+hex:  $(PRG).hex
+bin:  $(PRG).bin
+srec: $(PRG).srec
+
+%.hex: %.elf
+	$(OBJCOPY) -j .text -j .data -O ihex $< $@
+
+%.srec: %.elf
+	$(OBJCOPY) -j .text -j .data -O srec $< $@
+
+%.bin: %.elf
+	$(OBJCOPY) -j .text -j .data -O binary $< $@
+
+# Rules for building the .eeprom rom images
+
+eeprom: ehex ebin esrec
+
+ehex:  $(PRG)_eeprom.hex
+ebin:  $(PRG)_eeprom.bin
+esrec: $(PRG)_eeprom.srec
+
+%_eeprom.hex: %.elf
+	$(OBJCOPY) -j .eeprom --change-section-lma .eeprom=0 -O ihex $< $@ \
+	|| { echo empty $@ not generated; exit 0; }
+
+%_eeprom.srec: %.elf
+	$(OBJCOPY) -j .eeprom --change-section-lma .eeprom=0 -O srec $< $@ \
+	|| { echo empty $@ not generated; exit 0; }
+
+%_eeprom.bin: %.elf
+	$(OBJCOPY) -j .eeprom --change-section-lma .eeprom=0 -O binary $< $@ \
+	|| { echo empty $@ not generated; exit 0; }
+
+# Every thing below here is used by avr-libc's build system and can be ignored
+# by the casual user.
+
+FIG2DEV                 = fig2dev
+EXTRA_CLEAN_FILES       = *.hex *.bin *.srec
+
+dox: eps png pdf
+
+eps: $(PRG).eps
+png: $(PRG).png
+pdf: $(PRG).pdf
+
+%.eps: %.fig
+	$(FIG2DEV) -L eps $< $@
+
+%.pdf: %.fig
+	$(FIG2DEV) -L pdf $< $@
+
+%.png: %.fig
+	$(FIG2DEV) -L png $< $@
+
